@@ -1,0 +1,14 @@
+name: enso-fprm
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - pandas
+  - scikit-learn
+  - matplotlib
+  - openpyxl
+  - pyyaml
+  - pytest
+  - threadpoolctl

@@ -1,0 +1,10 @@
+# Actual direct dependency versions in Miniforge enso-fprm
+numpy==2.4.6
+scipy==1.17.1
+pandas==3.0.6
+scikit-learn==1.9.1
+matplotlib==3.11.2
+openpyxl==3.1.5
+PyYAML==6.0.3
+pytest==9.1.1
+threadpoolctl==3.7.0

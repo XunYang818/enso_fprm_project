@@ -1,0 +1,13 @@
+[project]
+name = "enso-fprm"
+version = "1.0.0"
+description = "ENSO missing-data recovery reproduction and multiscale validation-weighted FPRM"
+requires-python = ">=3.11"
+dependencies = ["numpy", "scipy", "pandas", "scikit-learn", "matplotlib", "openpyxl", "PyYAML", "threadpoolctl"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra -p no:cacheprovider"
+
+[tool.setuptools.packages.find]
+include = ["enso_fprm*"]

@@ -1,0 +1,13 @@
+# Experiment artifacts live in the workspace's codex_proc directory.
+codex_proc/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+.env
+.env.*

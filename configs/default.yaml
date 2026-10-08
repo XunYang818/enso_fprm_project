@@ -1,0 +1,18 @@
+schema_version: 1
+master_seed: 20261008
+seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+rates: [0.1, 0.3, 0.5, 0.7, 0.9]
+reference: NINO34
+alternate_reference: NINO3
+gp:
+  dimension: 3
+  delays: [1, 3, 6]
+  original_delay: 3
+  folds: 3
+  restarts: 2
+  optimizer: true
+  alphas: [1.0e-8, 1.0e-7, 1.0e-6]
+bootstrap_iterations: 10000
+statistics_seed: 20261008
+plot_seed: 0
+experiments: [main, block, reference_check, reproduction]
