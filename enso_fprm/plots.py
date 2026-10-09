@@ -14,12 +14,21 @@ LABELS = {"mean": "Mean", "linear": "Linear", "gpr_raw": "GPR (no embedding)",
           "fprm_tau6": "FPRM (tau=6)"}
 
 
+def method_label(method, original_delay):
+    if method == "fprm":
+        return f"FPRM (tau={original_delay})"
+    if method.startswith("fprm_tau"):
+        return f"FPRM (tau={int(method[len('fprm_tau'):])})"
+    return LABELS[method]
+
+
 def save(fig, dest):
     fig.savefig(dest, dpi=160, bbox_inches="tight")
     plt.close(fig)
 
 
-def make_plots(summary: pd.DataFrame, records: list[dict], folder: Path, plot_seed: int = 0):
+def make_plots(summary: pd.DataFrame, records: list[dict], folder: Path, plot_seed: int = 0,
+               original_delay: int = 3):
     folder.mkdir(parents=True, exist_ok=True)
     for experiment in summary.experiment.unique():
         block = summary[summary.experiment == experiment]
@@ -36,7 +45,7 @@ def make_plots(summary: pd.DataFrame, records: list[dict], folder: Path, plot_se
                         continue
                     ax.errorbar(d.rate * 100, d[metric + "_mean"],
                                 yerr=d[metric + "_std"].fillna(0), capsize=2,
-                                marker="o", markersize=3, label=LABELS[method])
+                                marker="o", markersize=3, label=method_label(method, original_delay))
                 ax.set(title=f"{experiment}: {target}", xlabel="Missing (%)", ylabel=metric)
                 ax.grid(alpha=0.2)
             axes[0, -1].legend(fontsize=8)
@@ -44,10 +53,12 @@ def make_plots(summary: pd.DataFrame, records: list[dict], folder: Path, plot_se
             save(fig, folder / f"{experiment}_{metric}.png")
         # Delays and equal/weighted fusion shown explicitly, separate from simple baselines.
         fig, ax = plt.subplots(figsize=(7, 4))
-        for method in ("fprm_tau1", "fprm", "fprm_tau6", "multiscale_equal", "multiscale_weighted"):
+        single_views = [m for m in block.method.unique() if m == "fprm" or m.startswith("fprm_tau")]
+        single_views.sort(key=lambda m: original_delay if m == "fprm" else int(m[len("fprm_tau"):]))
+        for method in (*single_views, "multiscale_equal", "multiscale_weighted"):
             d = block[block.method == method].groupby("rate").nrmse_mean.mean()
             if len(d):
-                ax.plot(d.index * 100, d.values, marker="o", label=LABELS[method])
+                ax.plot(d.index * 100, d.values, marker="o", label=method_label(method, original_delay))
         ax.set(title=f"{experiment}: scale ablation (target-average means)",
                xlabel="Missing (%)", ylabel="NRMSE")
         ax.grid(alpha=0.2)
@@ -65,7 +76,7 @@ def make_plots(summary: pd.DataFrame, records: list[dict], folder: Path, plot_se
         ax.scatter(dates[~data.hidden], data.truth[~data.hidden], color="tab:green", s=9, label="Observed")
         for method in ("fprm", "multiscale_equal", "multiscale_weighted"):
             if method in data:
-                ax.plot(dates, data[method], linewidth=0.9, label=LABELS[method])
+                ax.plot(dates, data[method], linewidth=0.9, label=method_label(method, original_delay))
         ax.set(title=f"{case['experiment']}: {case['target']}, reference={case['reference']}, seed={plot_seed}",
                xlabel="Month", ylabel="SST anomaly")
         ax.legend(fontsize=8, ncol=3)

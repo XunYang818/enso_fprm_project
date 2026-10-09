@@ -8,6 +8,7 @@ Python implementation choices; see REPRODUCTION.md for the differences.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from time import perf_counter
 import warnings
 
@@ -34,12 +35,31 @@ class GPSettings:
     alphas: tuple[float, ...] = (1e-8, 1e-7, 1e-6)
 
     def __post_init__(self):
-        if self.dimension < 1 or self.original_delay not in self.delays:
-            raise ValueError("original_delay must be included in delays; dimension >= 1")
-        if len(set(self.delays)) != len(self.delays) or any(t < 1 for t in self.delays):
+        for name, minimum in (("dimension", 1), ("original_delay", 1), ("folds", 2), ("restarts", 0)):
+            value = getattr(self, name)
+            if type(value) is not int or value < minimum:
+                raise ValueError(f"gp.{name} must be an integer >= {minimum}")
+        if (not self.delays or any(type(t) is not int or t < 1 for t in self.delays)
+                or len(set(self.delays)) != len(self.delays)):
             raise ValueError("delays must be unique positive integers")
-        if self.folds < 2 or self.restarts < 0 or not self.alphas or any(a <= 0 for a in self.alphas):
-            raise ValueError("Invalid CV, restart, or numerical-jitter settings")
+        if self.original_delay not in self.delays:
+            raise ValueError("original_delay must be included in delays")
+        if type(self.optimizer) is not bool:
+            raise ValueError("gp.optimizer must be a boolean")
+        if (not self.alphas or any(isinstance(a, bool) or not isinstance(a, (int, float))
+                                  or not np.isfinite(a) or a <= 0 for a in self.alphas)):
+            raise ValueError("gp.alphas must contain finite positive numbers")
+
+
+def configured_methods(settings: GPSettings) -> tuple[str, ...]:
+    """Keep the main comparison and add one ablation per non-original delay."""
+    return MAIN_METHODS + tuple(f"fprm_tau{d}" for d in settings.delays
+                                if d != settings.original_delay)
+
+
+def _ablation_delay(method: str) -> int | None:
+    match = re.fullmatch(r"fprm_tau([1-9][0-9]*)", method)
+    return int(match[1]) if match else None
 
 
 @dataclass
@@ -148,9 +168,9 @@ def validation_weights(features: dict[int, np.ndarray], observed_target: np.ndar
         "weight_source": "visible_labels_only"}
 
 
-def _validate(reference, target, indices, settings):
+def _validate(reference, target, indices, dimension, delay):
     y = np.asarray(target, dtype=float)
-    x, idx = delay_embedding(reference, settings.dimension, max(settings.delays), indices)
+    _, idx = delay_embedding(reference, dimension, delay, indices)
     if y.ndim != 1 or len(y) != len(idx) or np.isinf(y).any():
         raise ValueError("Target must match valid indices, with NaN for hidden labels")
     if np.isfinite(y).sum() < 2:
@@ -160,24 +180,31 @@ def _validate(reference, target, indices, settings):
 
 def recover_bundle(reference, observed_target, indices, *, seed: int = 0,
                    settings: GPSettings | None = None,
-                   methods=ALL_METHODS) -> dict[str, RecoveryResult]:
+                   methods=None) -> dict[str, RecoveryResult]:
     """Recover several methods while sharing final views and recording their true costs.
 
     `observed_target` contains NaN at all hidden positions. The caller keeps truth
     exclusively in its evaluation layer. Indices are original month offsets.
+    If methods is omitted, ablations follow settings.delays. Explicit
+    fprm_tauN methods can request any positive integer delay.
     """
     settings = settings or GPSettings()
-    methods = tuple(methods)
-    if not methods or len(set(methods)) != len(methods) or set(methods) - set(ALL_METHODS):
+    methods = configured_methods(settings) if methods is None else tuple(methods)
+    if (not methods or any(not isinstance(m, str) for m in methods)
+            or len(set(methods)) != len(methods)
+            or any(m not in MAIN_METHODS and _ablation_delay(m) is None for m in methods)):
         raise ValueError("Unknown or duplicate recovery methods")
-    # Single-view reproduction can use the full 416-month valid range.
-    if set(methods) <= {"fprm"}:
-        check = GPSettings(dimension=settings.dimension, delays=(settings.original_delay,),
-                           original_delay=settings.original_delay, folds=settings.folds,
-                           restarts=settings.restarts, optimizer=settings.optimizer, alphas=settings.alphas)
-    else:
-        check = settings
-    y, idx = _validate(reference, observed_target, indices, check)
+    requested_views = {m: settings.original_delay if m == "fprm" else _ablation_delay(m)
+                       for m in methods if m == "fprm" or _ablation_delay(m) is not None}
+    need_multi = any(m.startswith("multiscale") for m in methods)
+    required = set(requested_views.values())
+    if need_multi:
+        required.update(settings.delays)
+    # Only requested views constrain the valid range. Simple baselines use
+    # contemporaneous reference observations and need no delayed coordinates.
+    y, idx = _validate(reference, observed_target, indices,
+                       settings.dimension if required else 1,
+                       max(required) if required else 1)
     known = np.flatnonzero(np.isfinite(y))
     hidden = np.flatnonzero(np.isnan(y))
     results, views, feature_views = {}, {}, {}
@@ -213,23 +240,17 @@ def recover_bundle(reference, observed_target, indices, *, seed: int = 0,
             results["gpr_raw"] = result_from_prediction(pred, train_s, predict_s, meta)
         except (ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
             results["gpr_raw"] = RecoveryResult(None, error=f"{type(exc).__name__}: {exc}")
-    need_multi = any(m.startswith("multiscale") for m in methods)
-    required = set(settings.delays) if need_multi else set()
-    required.update(settings.original_delay for m in methods if m == "fprm")
-    required.update(tau for tau in (1, 6) if f"fprm_tau{tau}" in methods)
     failures = {}
-    for delay in settings.delays:
-        if delay not in required:
-            continue
+    ordered_delays = [d for d in settings.delays if d in required]
+    ordered_delays.extend(sorted(required - set(settings.delays)))
+    for delay in ordered_delays:
         try:
             pred, train_s, predict_s, meta, features = view(delay, settings.dimension)
             views[delay] = (pred, train_s, predict_s, meta)
             feature_views[delay] = features
         except (ValueError, RuntimeError, np.linalg.LinAlgError) as exc:
             failures[delay] = f"{type(exc).__name__}: {exc}"
-    for method, delay in (("fprm", settings.original_delay), ("fprm_tau1", 1), ("fprm_tau6", 6)):
-        if method not in methods:
-            continue
+    for method, delay in requested_views.items():
         if delay in failures or delay not in views:
             results[method] = RecoveryResult(None, error=failures.get(delay, "Delay absent from settings"))
         else:
@@ -237,14 +258,16 @@ def recover_bundle(reference, observed_target, indices, *, seed: int = 0,
     for method in ("multiscale_equal", "multiscale_weighted"):
         if method not in methods:
             continue
-        if failures:
-            results[method] = RecoveryResult(None, error=f"Required scale failed: {failures}")
+        multi_failures = {d: failures[d] for d in settings.delays if d in failures}
+        if multi_failures:
+            results[method] = RecoveryResult(None, error=f"Required scale failed: {multi_failures}")
             continue
         try:
             validation_s, weight_meta = 0.0, {}
             weights = np.ones(len(settings.delays)) / len(settings.delays)
             if method == "multiscale_weighted":
-                weights, validation_s, weight_meta = validation_weights(feature_views, y, idx, settings, seed)
+                weights, validation_s, weight_meta = validation_weights(
+                    {d: feature_views[d] for d in settings.delays}, y, idx, settings, seed)
             t = perf_counter()
             pred = np.column_stack([views[d][0] for d in settings.delays]) @ weights
             fusion_s = perf_counter() - t

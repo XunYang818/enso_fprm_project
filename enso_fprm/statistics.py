@@ -11,6 +11,13 @@ METRICS = ("rmse", "mae", "nrmse", "rho", "train_seconds", "validation_seconds",
 GROUPS = ["experiment", "reference", "mask_kind", "rate", "n", "target", "method"]
 
 
+def validate_statistics_settings(iterations, seed) -> None:
+    if type(iterations) is not int or iterations < 1:
+        raise ValueError("bootstrap_iterations must be a positive integer")
+    if type(seed) is not int or seed < 0:
+        raise ValueError("statistics_seed must be a nonnegative integer")
+
+
 def summarize(rows: pd.DataFrame) -> pd.DataFrame:
     output = []
     for key, group in rows.groupby(GROUPS, dropna=False, sort=True):
@@ -40,6 +47,7 @@ def seed_overall(rows: pd.DataFrame) -> pd.DataFrame:
 
 
 def paired_bootstrap(differences, *, iterations: int = 10000, seed: int = 20261008) -> dict:
+    validate_statistics_settings(iterations, seed)
     d = np.asarray(differences, dtype=float)
     if d.ndim != 1 or not np.isfinite(d).all() or iterations < 1:
         raise ValueError("Bootstrap needs finite paired differences and positive iterations")
@@ -61,6 +69,7 @@ def paired_bootstrap(differences, *, iterations: int = 10000, seed: int = 202610
 
 def paired_comparisons(rows: pd.DataFrame, overall: pd.DataFrame,
                        iterations=10000, stats_seed=20261008) -> pd.DataFrame:
+    validate_statistics_settings(iterations, stats_seed)
     output = []
     for source, level in ((rows, "target"), (overall, "overall")):
         groups = ["experiment", "reference", "mask_kind", "rate", "n"]

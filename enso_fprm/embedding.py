@@ -27,6 +27,9 @@ def delay_embedding(reference, dimension: int = 3, delay: int = 3,
             raise ValueError("indices must be a one-dimensional integer array")
         if len(idx) == 0 or np.any(idx < 0) or np.any(idx >= length):
             raise ValueError("indices outside valid embedding range")
-        if np.any(np.diff(idx) <= 0):
+        if np.any(idx[1:] <= idx[:-1]):
             raise ValueError("indices must be unique and strictly increasing")
+        # Bounds were checked before casting, so even uint64 values cannot wrap.
+        # A signed index also prevents uint64 + signed offsets becoming floats.
+        idx = idx.astype(np.intp, copy=False)
     return x[idx[:, None] + delay * np.arange(dimension)[None, :]], idx.copy()
