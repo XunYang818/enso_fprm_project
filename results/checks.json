@@ -1,0 +1,13 @@
+{
+  "n_cases": 960,
+  "n_method_results": 6360,
+  "n_expected_cases": 960,
+  "n_expected_method_results": 6360,
+  "n_failed": 0,
+  "metric_undefined_counts": {
+    "rho": 609,
+    "nrmse": 0
+  },
+  "all_predictions_preserve_observed": true,
+  "statistics_scope": "Variability over artificial masks on this fixed ENSO dataset only."
+}

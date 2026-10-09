@@ -1,0 +1,18 @@
+{
+  "planned_cases": 960,
+  "completed_cases": 960,
+  "exports": "results/",
+  "n_cases": 960,
+  "n_method_results": 6360,
+  "n_expected_cases": 960,
+  "n_expected_method_results": 6360,
+  "n_failed": 0,
+  "metric_undefined_counts": {
+    "rho": 609,
+    "nrmse": 0
+  },
+  "all_predictions_preserve_observed": true,
+  "statistics_scope": "Variability over artificial masks on this fixed ENSO dataset only.",
+  "original_signature": "029fd2c1ceb8479d0c2fa972cf05d2fd644b5010f9fcce8c877ddcddfd37f8b8",
+  "submission_note": "Original export location normalized to the bundled results directory."
+}

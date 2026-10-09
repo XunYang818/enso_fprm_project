@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .io import PROC, digest, write_json
+from .io import PROJECT, digest, write_json
 
 ARTICLE = "https://doi.org/10.6084/m9.figshare.30446765.v3"
 ASSETS = {
@@ -35,7 +35,7 @@ def verify_asset(path: Path, spec: dict) -> None:
             raise ValueError(f"{algorithm} mismatch: {path}; existing file is preserved")
 
 
-def prepare_assets(folder: Path = PROC / "data", include_source: bool = False) -> Path:
+def prepare_assets(folder: Path = PROJECT / "data", include_source: bool = False) -> Path:
     folder.mkdir(parents=True, exist_ok=True)
     for name, spec in ASSETS.items():
         if not include_source and name != "ENSO data.xlsx":

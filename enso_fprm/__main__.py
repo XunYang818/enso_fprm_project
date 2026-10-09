@@ -5,9 +5,9 @@ from pathlib import Path
 
 
 def main():
-    # Set before importing NumPy / matplotlib. All caches stay in workspace/codex_proc.
-    workspace = Path(__file__).resolve().parents[2]
-    proc = workspace / "codex_proc" / "enso_fprm"
+    # Set before importing NumPy / matplotlib.
+    from .io import PROC
+    proc = PROC
     for name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
         os.environ[name] = "1"
     os.environ["MPLCONFIGDIR"] = str(proc / "cache" / "matplotlib")

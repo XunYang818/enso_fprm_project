@@ -1,145 +1,139 @@
-# ENSO 缺失数据恢复代码
+# 基于多尺度融合的 ENSO 数据恢复
 
-本项目用 Python 复现 Wu 等人的 Full-Partial Reconstruction Mapping（FPRM），并实现固定多尺度延迟嵌入与可观测标签交叉验证加权。交付内容是代码、配置、测试和运行说明；不包含实验报告。原版是 **Python 方法复现**，不是 MATLAB 数值逐点复刻。来源、参数与差异见 [REPRODUCTION.md](REPRODUCTION.md)。
+本项目用 Python 复现 Full-Partial Reconstruction Mapping（FPRM），并实现多尺度等权融合和交叉验证加权融合。实验报告位于项目上一级目录，正式实验结果位于 `results/`。
 
-2026-10-09 已使用当前交付代码完整重跑正式 20 种子实验：960 个案例、6360 条方法结果，零方法失败。保存的预测结果已逐项复算核验，运行清单中的模型源码指纹与当前代码一致。实验报告和正式结果保留在本地工作区，不纳入代码仓库；完整运行记录与缓存位于上级工作区的 `codex_proc/`。
-
-2026-10-08 当前版本已在指定 Miniforge 环境验证：139 项测试通过；默认冒烟实验的八种方法全部成功，包含图表生成。续跑除检查方法与字段完整性外，还从预测文件复算指标并与参数文件核对融合权重。指标数值错误或权重缺失的记录均在真实续跑中被跳过，补算写入新尝试，再次续跑正确复用。无符号整数索引已验证与有符号索引等价，乱序与越界索引会明确拒绝。默认冒烟实验的八种方法预测与修复前完全一致，融合权重也一致；此前正式实验的 960 个完整案例记录全部通过新校验。旧记录格式兼容，续跑仍要求运行身份一致。
-
-此前版本已完成 `validation.yaml` 的 48 个真实数据案例、318 条方法结果，以及正式 20 种子实验的 960 个案例、6360 条方法结果，零方法失败；逐项复算指标及输出文件校验均通过。旧结果保留，修复后代码指纹发生变化，新的实验应使用新的运行目录。常数预测的相关系数按未定义保存，核参数边界警告保留在参数文件。运行产物位于工作区的 `codex_proc/`，不纳入代码仓库。
-
-## 快速运行
-
-在 PowerShell 中进入本项目目录。已验证的环境为 `D:\miniforge3\envs\enso-fprm`，Python 3.11。
-
-```powershell
-# 校验数据和下载原作者源码（已有校验通过的文件会直接复用）
-.\run.ps1 -Mode prepare
-
-# 运行测试，临时目录自动放在上级工作区的 codex_proc
-.\run.ps1 -Mode test
-
-# 一个目标、50% 随机缺失、一个种子的完整流程，含图表
-.\run.ps1 -Suite smoke
-
-# 每组一个种子，验证所有缺失率、缺失模式、参考变量和评价范围
-.\run.ps1 -Suite full -Config .\configs\validation.yaml
-
-# 正式实验：每组 20 个种子
-.\run.ps1 -Suite full
-```
-
-若运行脚本被本机 PowerShell 执行策略阻止，可以按下面的直接命令执行，无需修改策略。Miniforge 位置可用 `-CondaExe` 指定。
-
-```powershell
-$env:PYTHONDONTWRITEBYTECODE = '1'
-$env:PYTHONIOENCODING = 'utf-8'
-& 'D:\miniforge3\Scripts\conda.exe' run --no-capture-output -n enso-fprm python -B -m enso_fprm --suite smoke --config .\configs\default.yaml
-```
-
-每次运行打印 `RUN_DIR` 和 `EXPORT_DIR`。`full` 在默认配置下包含 960 个目标/掩码案例、6360 条方法结果，其中六个主比较方法和两个单尺度消融复用最终视图拟合。加权方法每个案例另有 9 次折内拟合，因此完整实验耗时明显长于冒烟运行。以本机实际运行时间为准。
-
-## 环境恢复
-
-现有环境可直接使用，不在 base 中安装依赖。如果在另一台机器新建环境：
-
-```powershell
-& 'D:\miniforge3\Scripts\conda.exe' env create -f .\environment.yml
-```
-
-`environment.yml` 为跨平台依赖清单；`requirements-lock.txt` 记录本次实现环境的直接依赖版本。`conda-win-64.lock.txt` 为本机 Conda 包的精确快照，适用于 Windows x64：
-
-```powershell
-& 'D:\miniforge3\Scripts\conda.exe' create -n enso-fprm-replay --file .\conda-win-64.lock.txt
-```
-
-后者环境名与运行脚本默认名不同，可将其改为 `enso-fprm` 或用 `conda run -n enso-fprm-replay` 直接运行。运行时以 `threadpoolctl` 强制数值库单线程，记录实际 Python、库版本、平台、CPU 信息和线程池。
-
-## 实验与算法
-
-数据固定为 Figshare v3 的 `ENSO data.xlsx`。提取 1990-01 至 2025-02 的 422 个连续月份，变量为 NINO4、NINO34、NINO3、NINO12。下载前后均核验 MD5 和 SHA256；日期、表头与原始数值异常时停止，不删行、不自动填补。该版本表头将 `Month` 拆为 `Mo` 与 `nth NINO4`，代码接受这个明确列出的表头变体，运行清单记录映射。
-
-| 方法名 | 实现 |
-|---|---|
-| `mean` | 当前可观测目标均值 |
-| `linear` | 原月份索引线性插值；边界取最近观测 |
-| `gpr_raw` | 单个同时刻参考值输入 GPR |
-| `fprm` | E=3、tau=3 的前向嵌入 GPR |
-| `multiscale_equal` | tau=1、3、6 的三视图等权融合 |
-| `multiscale_weighted` | 可观测标签按时间均分三折，以折外 MSE 的倒数确定权重 |
-| `fprm_tau1` / `fprm_tau6` | 单尺度消融，另一个单尺度就是 `fprm` |
-
-表中为默认延迟的命名。修改 `gp.delays` 后，会为每个非原版延迟自动生成 `fprm_tauN` 消融方法，例如 `[2, 3, 9]` 对应 `fprm_tau2`、`fprm_tau9`；原版延迟仍由 `fprm` 表示。图表的消融曲线和延迟标签随配置变化。冒烟实验选择与参考变量不同的第一个目标；默认仍为 NINO4。
-
-三视图均只按目标标量标签的可见性训练，标准化只用对应训练折。GPR 为共享长度尺度的 `Constant * RBF + White` 核，不使用 ARD。每次拟合固定种子，以 L-BFGS-B 优化并额外重启两次；分解失败才逐次增大数值 jitter。有限预测对应的优化警告会保留，失败不会静默替换为其他算法。
-
-主比较统一前 410 个月，参考序列保留全部 422 个月；末 12 个月不恢复、不评价。原版复现检查单独使用 416 个月。模型使用参考变量的未来观测，因此适用于**离线缺失恢复**，不能作为实时预测效果。
-
-默认随机缺失率为 10%、30%、50%、70%、90%，种子 0–19。随机掩码在每个目标/种子下嵌套；共同目标切换参考时共享掩码。连续缺失是一段随机位置区间，可触及首尾，允许重复。模型收到的目标在所有隐藏位置均为 NaN，完整真值仅由评价层保存。
-
-`configs/default.yaml` 为正式配置；`configs/validation.yaml` 使用相同算法参数但仅一个种子。可修改率、种子、实验组和 GP 设置；若改变研究设置，应把结果作为新实验，不与默认范围混合。`bootstrap_iterations` 必须为正整数，各种子必须为非负整数，GP 的维度、延迟、折数与重启次数必须使用对应范围内的整数；浮点数或布尔值不作为整数接受。配置加载及直接调用 `run` 都会在数据准备和训练前拒绝这些错误。
-
-生成实验计划时还会按实际 suite、缺失率及请求方法检查有效长度、隐藏数、可见标签数，以及加权方法每折是否至少有两个训练标签。不兼容的配置在数据准备和创建运行目录前拒绝，错误信息包含实验组、目标、维度、所用延迟和有效长度。例如 `E=3、delays=[1,3,211]` 的冒烟实验会明确指出 `n=0`。仅运行原版复现时只检查原版延迟，不受未使用的多尺度延迟、配置缺失率或验证折数限制；冒烟使用其固定的 50% 缺失率。
-
-## 输出位置与续跑
-
-所有数据、下载源码、缓存、日志、测试临时文件和运行结果均在**本项目上级工作区**的 `codex_proc/enso_fprm/`。项目目录只有最终代码和配置。脚本不删除或移动已有文件。
+## 文件结构
 
 ```text
-codex_proc/enso_fprm/
-  data/                     原始数据、作者源码、校验信息
-  cache/                    matplotlib 缓存
-  tests/                    各次测试的独立临时目录
-  runs/<独立运行目录>/
-    manifest.json           数据/配置/代码/环境指纹、表头映射
-    config_used.yaml        实际配置
-    enso_selected.csv       422x4 数据选择
-    cases/<案例>/attempt_*/
-      mask.csv              原索引、日期、隐藏位置
-      predictions.csv       真值、模型可见输入、各方法恢复值
-      parameters.json       核参数、折内标准化、权重、警告、耗时
-      completed.json        案例结果及输出文件 SHA256
-    exports_*/
-      metrics.csv           逐次指标与分阶段时间
-      summary_by_target.csv 各目标种子均值、样本标准差、有效数量
-      overall_by_seed.csv   每种子先平均目标 NRMSE
-      summary_overall.csv   再在种子间汇总整体 NRMSE
-      paired_statistics.csv 加权减原版的配对差、胜率、bootstrap 区间
-      weights.csv           各尺度权重和折外 MSE
-      checks.json           预期与实际案例/方法数量、失败数量、未定义指标数量
-      figures/              精度、相关、耗时、消融和恢复曲线
+enso_fprm_project/
+  enso_fprm/                 算法、实验、评价与绘图代码
+  configs/default.yaml       正式配置，20 个种子
+  configs/validation.yaml    验证配置，1 个种子
+  tests/                     正确性、防泄漏与续跑测试
+  data/                      原始数据、作者源码及来源记录
+  results/                   报告对应的结果、图表和版本记录
+  environment.yml            Conda 环境配置
+  requirements-lock.txt      主要 Python 依赖版本
+  pyproject.toml             Python 项目及测试配置
+  run.ps1                    可选运行入口
 ```
 
-续跑时使用运行打印的真实路径，保持同一配置和 suite：
+## 安装与运行
 
-```powershell
-.\run.ps1 -Suite full -Resume 'D:\实际工作区\codex_proc\enso_fprm\runs\实际运行目录'
+在 Miniforge Prompt 中进入项目目录。已验证环境为 Python 3.11，环境名为 `enso-fprm`。已有该环境时可跳过创建步骤。
+
+```shell
+conda env create -f ./environment.yml
 ```
 
-数据、配置、代码、环境、线程设定或案例上限任何一项不一致时，拒绝复用；另开新运行即可。只有案例身份符合当前计划、每个请求方法恰有一条完整结果、预测表包含全部方法列、全部方法成功且文件校验通过的案例可复用。复用前从预测文件复算隐藏位置的四项指标及未定义原因，并核对掩码、观测数、隐藏数、观测值保持和阶段耗时求和；融合权重必须完整、唯一，并与参数文件的每个延迟、权重和折外 MSE 一致。CSV 浮点数按原值读取，避免常数预测的相关系数被读表舍入改变。损坏、不完整或缺少输出校验信息的完成记录会打印 `CACHE_SKIPPED` 诊断并跳过；仍可复用较早的有效尝试，没有有效尝试时重新计算。最终汇总在创建导出目录前再次检查计划案例、方法结果及输出内容，缺失、重复或与输出文件不一致的结果会明确报错，不能按零失败判为成功。失败或未完成案例写入新的 `attempt` 目录；汇总输出也另建目录，不删除旧尝试。`-LimitCases 5` 仅供开发截取前几个案例，且被写入指纹，不能当作完整实验。
+若希望安装报告使用的主要 Python 库版本，可在创建环境后执行：
 
-## 指标与解读边界
-
-仅在隐藏位置计算 RMSE、MAE、Pearson rho、`NRMSE = RMSE / std(隐藏真值, ddof=1)`。常数预测的 rho 未定义，保存为空并写原因；不能用 0 代替。一个种子的样本标准差、bootstrap 置信区间也留空。配对 bootstrap 每次整组抽取种子差异，默认 10000 次；三个目标先在同一种子内平均，不作为三个独立重复。
-
-时间分为最终训练、验证与权重、预测和总计。共享视图的成本按实际已执行步骤计入相应方法，不能用缓存命中的时间冒充重新训练成本；各方法时间求和也不等于整个 bundle 的墙钟时间。下载、读表、绘图和预热排除在算法时间之外。各阶段具体元数据保存在 `parameters.json`。
-
-多尺度加权是本项目的改进假设，效果由实验决定，不预设所有缺失模式都会胜出。种子区间只反映同一 ENSO 数据上人工缺失位置的变化，不代表独立气候数据集的泛化不确定性。
-
-## 文件入口
-
-`enso_fprm/data.py` 数据获取与校验；`embedding.py` 作者嵌入函数的 Python 移植；`models.py` 各恢复算法；`experiment.py` 实验、计时与续跑；`statistics.py` 汇总与配对统计；`plots.py` 图表；`tests/test_core.py` 正确性、失败分支、确定性和隐藏真值泄漏验证。
-
-公开模型接口：
-
-```python
-from enso_fprm.models import recover, GPSettings
-# complete_reference: 完整参考；observed_target: 隐藏位置为 NaN；indices: 原始月份索引。
-result = recover(complete_reference, observed_target, indices,
-                 method="multiscale_weighted", seed=0, settings=GPSettings())
-# result.recovered / result.metadata / result.error / result.total_seconds
+```shell
+conda run -n enso-fprm python -m pip install -r ./requirements-lock.txt
 ```
 
-索引支持 NumPy 有符号及无符号整数数组，必须唯一、严格递增且在有效范围内。范围检查后统一转为平台有符号索引，不改变调用者的数组。
+版本清单仅固定直接依赖；原实验的环境版本见 `results/manifest.json`。不同平台、库版本或硬件下的数值和耗时可能有差异。
 
-单独调用 `mean`、`linear` 或 `gpr_raw` 可以使用完整参考范围；单尺度方法按自身延迟确定有效索引，支持显式 `method="fprm_tauN"`。同时请求多个方法时，索引必须对所有请求的方法有效。主比较仍由实验编排统一使用前 410 个月。`recover_bundle` 未指定 `methods` 时，自动使用当前配置的主方法和各尺度消融。
+在项目目录执行以下命令：
+
+```shell
+# 校验随包数据及作者源码；文件缺失时才下载
+conda run --no-capture-output -n enso-fprm python -B -m enso_fprm --prepare
+
+# 冒烟实验：一个目标、50% 随机缺失、一个种子，含八种方法及图表
+conda run --no-capture-output -n enso-fprm python -B -m enso_fprm --suite smoke
+
+# 验证全部实验组，每组一个种子
+conda run --no-capture-output -n enso-fprm python -B -m enso_fprm --suite full --config ./configs/validation.yaml
+
+# 正式实验：20 个种子，960 个案例、6360 条方法结果
+conda run --no-capture-output -n enso-fprm python -B -m enso_fprm --suite full
+```
+
+正式实验耗时明显长于冒烟实验，建议先运行 `smoke`。原始数据已随包提供，校验通过时实验无需下载数据；环境安装需要获取依赖。
+
+测试命令中的临时目录应使用一个尚不存在的名称：
+
+```shell
+conda run --no-capture-output -n enso-fprm python -B -m pytest --basetemp ./outputs/tests/check_01
+```
+
+`run.ps1` 也提供 `-Mode prepare`、`-Mode test`、`-Suite smoke`、`-Suite full` 入口，自动调用当前终端可用的 Conda，并为每次测试选择独立临时目录。
+
+## 数据与输出
+
+程序从 `data/` 读取原始文件，新运行结果写入 `outputs/runs/`，缓存和测试临时文件写入 `outputs/` 下的相应子目录。输出目录会自动创建。`results/` 保存报告对应的固定结果，新运行不会覆盖这些文件。
+
+每次运行会打印 `RUN_DIR` 和 `EXPORT_DIR`。运行目录保存配置、环境、掩码、预测与参数；导出目录保存指标表、统计结果及 `figures/` 图表。
+
+续跑时，将下面的 `运行目录名` 替换为实际生成的目录名：
+
+```shell
+conda run --no-capture-output -n enso-fprm python -B -m enso_fprm --suite full --resume ./outputs/runs/运行目录名
+```
+
+续跑核对数据、配置、代码和环境，并验证逐案例结果；不一致时应另开新运行。随包 `results/` 不含逐案例缓存，不能直接续跑。`--limit-cases` 仅供开发检查，不代表完整实验。
+
+数据来自作者 Figshare v3 的 `ENSO data.xlsx`，选取 1990-01 至 2025-02 的 422 个月，变量为 NINO4、NINO34、NINO3、NINO12。程序核验 MD5、SHA256、日期、表头和数值，不自动填补原始异常。下载地址和校验值见 `data/sources.json`。作者 MATLAB 文件作为来源归档，运行本项目不需要 MATLAB。
+
+## 实验方法
+
+| 方法 | 实现 |
+|---|---|
+| `mean` | 可观测目标均值填充 |
+| `linear` | 月份索引线性插值，边界取最近观测 |
+| `gpr_raw` | 同时刻参考值输入 GPR |
+| `fprm` | E=3、tau=3 的前向嵌入 GPR |
+| `fprm_tau1` / `fprm_tau6` | 单尺度消融 |
+| `multiscale_equal` | tau=1、3、6 三视图等权融合 |
+| `multiscale_weighted` | 可观测标签按时间分三折，以折外 MSE 倒数加权 |
+
+默认参考为 NINO34，另用 NINO3 检查参考切换。随机缺失率为 10%、30%、50%、70%、90%，种子为 0–19；实验还包括连续区间缺失及原版复现检查。主比较评价前 410 个月，原版复现检查使用 416 个月，参考保留全部 422 个月。
+
+标准化和权重估计只使用可观测训练标签，隐藏真值仅用于评价。仅在隐藏点计算 RMSE、MAE、Pearson rho 和 `NRMSE = RMSE / std(隐藏真值, ddof=1)`。常数预测的 rho 保存为空并记录原因。整体 NRMSE 先在同一种子内平均目标，再在种子间汇总；配对 bootstrap 以种子为单位抽样。
+
+前向嵌入使用参考的未来观测，适用于离线缺失恢复；统计区间反映固定 ENSO 数据上人工缺失位置的变化。
+
+## 正式结果
+
+`results/` 对应 2026-10-09 正式运行：960 个案例、6360 条方法结果、零失败。
+
+| 文件 | 内容 |
+|---|---|
+| `metrics.csv` | 逐案例、逐方法指标及分阶段耗时 |
+| `summary_by_target.csv` | 各目标跨种子的均值、样本标准差与有效数量 |
+| `overall_by_seed.csv` / `summary_overall.csv` | 逐种子整体 NRMSE 及汇总 |
+| `paired_statistics.csv` | 配对差、胜率及 bootstrap 区间 |
+| `weights.csv` | 多尺度权重及折外 MSE |
+| `checks.json` | 案例与方法数量、失败及未定义指标计数 |
+| `figures/` | 精度、相关系数、耗时、消融及恢复曲线 |
+| `manifest.json` / `config_used.yaml` | 正式运行配置、环境和代码指纹 |
+| `run_status.json` | 正式运行完成情况 |
+| `provenance.json` | 提交代码与正式运行的对应关系及文件校验值 |
+
+提交版调整了数据、输出和缓存目录及运行入口，算法、掩码、评价、统计和实验配置保持一致。正式运行记录中的本机路径已改为相对路径，并保留原运行签名及整理说明；它们用于追溯，不作为续跑缓存。
+
+## 复现依据与来源
+
+Wu, T., Gao, X., Tang, Y., et al. *Dynamics-informed machine learning for recovering extensive missing systems dynamics*. Nature Communications (2026)，[DOI: 10.1038/s41467-026-77922-1](https://doi.org/10.1038/s41467-026-77922-1)。
+
+- [论文 PDF](https://www.nature.com/articles/s41467-026-77922-1_reference.pdf)：Methods 式 (13)–(18) 对应从完整参考嵌入到目标标量的 GPR 映射。
+- [补充材料](https://media.springernature.com/original/springer-static/esm/art%3A10.1038%2Fs41467-026-77922-1/MediaObjects/41467_2026_77922_MOESM1_ESM.pdf)：Fig. S9 对应 ENSO 范围与参考切换；Table S1 给出 SST 的 E=3、tau=3。作者通用示例为 E=5、tau=3，本项目采用 SST 参数。
+- [作者数据与代码 v3](https://doi.org/10.6084/m9.figshare.30446765.v3)：随包保留原始数据、`PhaSpaRecon.m` 和 `FPRM mian code.mlx`，采用 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)。
+
+`embedding.py` 移植作者的前向延迟坐标，按行存放样本并返回原月份索引。`models.py` 参考作者主脚本，只要求目标标量标签可见，不要求整个目标延迟窗口完整。
+
+Python 实现按训练行的均值、样本标准差（`ddof=1`）标准化特征与目标，常数列除数设为 1，预测后还原目标单位。作者脚本未手工标准化目标。核为 `ConstantKernel(0.5, [1e-4, 1e4]) * RBF(1, [1e-2, 1e2]) + WhiteKernel(0.01, [1e-8, 1e1])`，共享一个长度尺度，`normalize_y=False`，使用 L-BFGS-B 并额外重启两次。jitter 从 `1e-8` 起，仅在矩阵分解失败时尝试 `1e-7`、`1e-6`；失败及优化警告显式记录。
+
+作者采用 MATLAB R2024b 的 `fitrgp`，其基础均值、初始化和优化行为与 scikit-learn 不同，本项目复现方法结构，不宣称逐点数值一致。作者的随机种子改为固定种子派生；缺失率采用嵌套掩码，共同目标切换参考时共享掩码。
+
+改进方法独立拟合 tau=1、3、6 三个视图，各验证折重新计算标准化和核参数，以全部折外预测的原单位 MSE 确定权重：
+
+```text
+epsilon = 1e-8 * max(1, var(y_observed, ddof=1))
+w_j = (1 / (MSE_j + epsilon)) / sum_k(1 / (MSE_k + epsilon))
+```
+
+最终视图使用全部可观测标签拟合，其预测不参与折外误差与权重估计。等权融合和单尺度方法用于消融。三折是离线恢复的标签划分，不能解释为滚动时间预测。
+
+前向嵌入与原版 FPRM 流程改编自 Tao Wu 等人发布的代码，相关改编按 CC BY 4.0 保留归属。本项目增加了输入校验、可重复实验、Python GPR 参数约定、多尺度融合、防泄漏测试和统计输出。再发布时请保留本节来源、许可与改编说明。

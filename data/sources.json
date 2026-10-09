@@ -1,0 +1,24 @@
+{
+  "article": "https://doi.org/10.6084/m9.figshare.30446765.v3",
+  "figshare_version": 3,
+  "assets": {
+    "ENSO data.xlsx": {
+      "url": "https://ndownloader.figshare.com/files/64540869",
+      "md5": "fad680f9cea6557d3a3052a1328dc4bd",
+      "sha256": "631f8046ee637c80a2ad28a20d8530bc56b3e5b1c5b613f21a47a3d33deb3e33"
+    },
+    "PhaSpaRecon.m": {
+      "url": "https://ndownloader.figshare.com/files/64540899",
+      "md5": "afb1cde2e407eb9725da6ff428af2267",
+      "sha256": "c13dbd7dd5dd40f0436f28aaf16d414062660500d1afd14c6bbda151225cad8e"
+    },
+    "FPRM mian code.mlx": {
+      "url": "https://ndownloader.figshare.com/files/64540893",
+      "md5": "33f9655df4492ec20b184229497ca9da",
+      "sha256": "f2afaae07de0d2c73474be3eaaefb8a8d0bdaac6ea6de9e0a98b485dd8e9260b"
+    }
+  },
+  "authors": "Tao Wu et al.",
+  "license": "CC BY 4.0",
+  "license_url": "https://creativecommons.org/licenses/by/4.0/"
+}

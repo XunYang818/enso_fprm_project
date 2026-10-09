@@ -10,8 +10,7 @@ import sys
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
-WORKSPACE = PROJECT.parent
-PROC = WORKSPACE / "codex_proc" / "enso_fprm"
+PROC = PROJECT / "outputs"
 PACKAGES = ("numpy", "scipy", "pandas", "scikit-learn", "matplotlib",
             "openpyxl", "PyYAML", "pytest", "threadpoolctl")
 
@@ -56,6 +55,6 @@ def environment_info() -> dict:
 
 def artifact_path(path: Path) -> Path:
     path = path.resolve()
-    if not path.is_relative_to((WORKSPACE / "codex_proc").resolve()):
-        raise ValueError("All generated artifacts must stay inside workspace/codex_proc")
+    if not path.is_relative_to(PROC.resolve()):
+        raise ValueError("Run artifacts must stay inside project outputs")
     return path

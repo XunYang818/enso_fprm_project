@@ -1,5 +1,5 @@
-# Experiment artifacts live in the workspace's codex_proc directory.
-codex_proc/
+# Generated runtime files.
+outputs/
 __pycache__/
 *.py[cod]
 .pytest_cache/

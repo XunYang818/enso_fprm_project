@@ -3,7 +3,7 @@
 The embedding, scalar labels, training-only predictor z-score, and GPR mapping
 follow Wu et al.'s public MATLAB implementation, licensed under CC BY 4.0.
 Target scaling, optimizer settings, and multiscale cross-validation are explicit
-Python implementation choices; see REPRODUCTION.md for the differences.
+Python implementation choices; see README.md for the differences.
 """
 from __future__ import annotations
 

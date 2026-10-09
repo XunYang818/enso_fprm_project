@@ -3,14 +3,13 @@ param(
     [ValidateSet('smoke', 'full')] [string]$Suite = 'smoke',
     [string]$Config = '',
     [string]$Resume = '',
-    [string]$CondaExe = 'D:\miniforge3\Scripts\conda.exe',
+    [string]$CondaExe = 'conda',
     [switch]$NoPlots,
     [int]$LimitCases = 0
 )
 $ErrorActionPreference = 'Stop'
 $projectPath = $PSScriptRoot
-$workspacePath = Split-Path -Parent $projectPath
-$artifactRoot = Join-Path $workspacePath 'codex_proc\enso_fprm'
+$artifactRoot = Join-Path $projectPath 'outputs'
 New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
 $env:PYTHONDONTWRITEBYTECODE = '1'
 $env:PYTHONIOENCODING = 'utf-8'
@@ -20,7 +19,9 @@ $env:OMP_NUM_THREADS = '1'
 $env:OPENBLAS_NUM_THREADS = '1'
 $env:MKL_NUM_THREADS = '1'
 $env:NUMEXPR_NUM_THREADS = '1'
-if (-not (Test-Path -LiteralPath $CondaExe)) { throw "Miniforge conda.exe missing: $CondaExe" }
+if ($CondaExe -eq 'conda' -and $env:CONDA_EXE) { $CondaExe = $env:CONDA_EXE }
+$condaCommand = Get-Command $CondaExe -ErrorAction SilentlyContinue
+if (-not $condaCommand) { throw 'Conda is unavailable. Run from Miniforge Prompt or an initialized Conda terminal.' }
 Push-Location -LiteralPath $projectPath
 try {
     if ($Mode -eq 'test') {
